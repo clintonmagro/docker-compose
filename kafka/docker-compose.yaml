@@ -2,7 +2,7 @@
 version: '3.9'
 services:
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.3.0
+    image: confluentinc/cp-zookeeper:7.6.2
     hostname: zookeeper
     container_name: zookeeper
     ports:
@@ -18,7 +18,7 @@ services:
       retries: 10
 
   broker:
-    image: confluentinc/cp-server:7.3.0
+    image: confluentinc/cp-server:7.6.2
     hostname: broker
     container_name: broker
     depends_on:
@@ -55,7 +55,7 @@ services:
       start_period: 10s
 
   schema-registry:
-    image: confluentinc/cp-schema-registry:7.3.0
+    image: confluentinc/cp-schema-registry:7.6.2
     hostname: schema-registry
     container_name: schema-registry
     depends_on:
@@ -76,7 +76,7 @@ services:
       start_period: 25s
 
   connect:
-    image: confluentinc/cp-server-connect:7.3.0
+    image: confluentinc/cp-server-connect:7.6.2
     hostname: connect
     container_name: connect
     depends_on:
@@ -103,7 +103,7 @@ services:
       CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       # CLASSPATH required due to CC-2422
-      CLASSPATH: /usr/share/java/monitoring-interceptors/monitoring-interceptors-7.3.0.jar
+      CLASSPATH: /usr/share/java/monitoring-interceptors/monitoring-interceptors-7.6.2.jar
       CONNECT_PRODUCER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor"
       CONNECT_CONSUMER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor"
       CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components,/etc/kafka-connect/jars"
@@ -117,7 +117,7 @@ services:
         start_period: 45s
 
   control-center:
-    image: confluentinc/cp-enterprise-control-center:7.3.0
+    image: confluentinc/cp-enterprise-control-center:7.6.2
     hostname: control-center
     container_name: control-center
     depends_on:
@@ -150,7 +150,7 @@ services:
       retries: 10
 
   ksqldb-server:
-    image: confluentinc/cp-ksqldb-server:7.3.0
+    image: confluentinc/cp-ksqldb-server:7.6.2
     hostname: ksqldb-server
     container_name: ksqldb-server
     depends_on:
@@ -174,9 +174,15 @@ services:
       KSQL_KSQL_LOGGING_PROCESSING_TOPIC_REPLICATION_FACTOR: 1
       KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: 'true'
       KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: 'true'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   ksqldb-cli:
-    image: confluentinc/cp-ksqldb-cli:7.3.0
+    image: confluentinc/cp-ksqldb-cli:7.6.2
     container_name: ksqldb-cli
     depends_on:
       broker:
@@ -190,7 +196,7 @@ services:
     restart: unless-stopped
 
   ksql-datagen:
-    image: confluentinc/ksqldb-examples:7.3.0
+    image: confluentinc/ksqldb-examples:7.6.2
     hostname: ksql-datagen
     container_name: ksql-datagen
     depends_on:
@@ -217,7 +223,7 @@ services:
     restart: unless-stopped
 
   rest-proxy:
-    image: confluentinc/cp-kafka-rest:7.3.0
+    image: confluentinc/cp-kafka-rest:7.6.2
     depends_on:
       broker:
         condition: service_healthy
