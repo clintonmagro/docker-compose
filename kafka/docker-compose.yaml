@@ -1,37 +1,38 @@
 ---
+# =============================================================================
+# Confluent Kafka Stack — KRaft mode (CP 8.x, no ZooKeeper)
+# with AKHQ as the default UI and Control Center available via profile
+#
+# Default run (AKHQ only):
+#   docker compose up -d
+#
+# Run with Confluent Control Center:
+#   docker compose --profile control-center up -d
+#
+# Port defaults are defined in .env — edit that file to remap any host port.
+# =============================================================================
+
 version: '3.9'
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.6.2
-    hostname: zookeeper
-    container_name: zookeeper
-    ports:
-      - "2181:2181"
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    restart: always
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-
   broker:
-    image: confluentinc/cp-server:7.6.2
+    image: confluentinc/cp-server:8.2.2
     hostname: broker
     container_name: broker
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     ports:
-      - "9092:9092"
-      - "9101:9101"
+      - "${BROKER_PORT:-9092}:9092"
+      - "${BROKER_JMX_PORT:-9101}:9101"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092
+      # KRaft settings (ZooKeeper-free)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://broker:29092,CONTROLLER://broker:9093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://broker:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_KRAFT_CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qg'
+      # Confluent settings
       KAFKA_METRIC_REPORTERS: io.confluent.metrics.reporter.ConfluentMetricsReporter
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
@@ -51,18 +52,18 @@ services:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "broker:9092"]
       interval: 10s
       timeout: 10s
-      retries: 10
-      start_period: 10s
+      retries: 15
+      start_period: 30s
 
   schema-registry:
-    image: confluentinc/cp-schema-registry:7.6.2
+    image: confluentinc/cp-schema-registry:8.2.2
     hostname: schema-registry
     container_name: schema-registry
     depends_on:
       broker:
         condition: service_healthy
     ports:
-      - "8081:8081"
+      - "${SCHEMA_REGISTRY_PORT:-8081}:8081"
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
@@ -76,7 +77,7 @@ services:
       start_period: 25s
 
   connect:
-    image: confluentinc/cp-server-connect:7.6.2
+    image: confluentinc/cp-server-connect:8.2.2
     hostname: connect
     container_name: connect
     depends_on:
@@ -85,7 +86,7 @@ services:
       schema-registry:
         condition: service_healthy
     ports:
-      - "8083:8083"
+      - "${CONNECT_PORT:-8083}:8083"
     volumes:
       - ./jars:/etc/kafka-connect/jars/
     environment:
@@ -103,23 +104,56 @@ services:
       CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       # CLASSPATH required due to CC-2422
-      CLASSPATH: /usr/share/java/monitoring-interceptors/monitoring-interceptors-7.6.2.jar
+      CLASSPATH: /usr/share/java/monitoring-interceptors/monitoring-interceptors-8.2.2.jar
       CONNECT_PRODUCER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringProducerInterceptor"
       CONNECT_CONSUMER_INTERCEPTOR_CLASSES: "io.confluent.monitoring.clients.interceptor.MonitoringConsumerInterceptor"
       CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components,/etc/kafka-connect/jars"
       CONNECT_LOG4J_LOGGERS: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR
     restart: unless-stopped
     healthcheck:
-        test: ["CMD", "curl", "-f", "http://localhost:8083/"]
-        interval: 10s
-        timeout: 3s
-        retries: 15
-        start_period: 45s
+      test: ["CMD", "curl", "-f", "http://localhost:8083/"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+      start_period: 45s
+
+  akhq:
+    image: tchiotludo/akhq:0.27.1
+    hostname: akhq
+    container_name: ${AKHQ_CONTAINER_NAME:-akhq}
+    depends_on:
+      broker:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    ports:
+      - "${AKHQ_PORT:-8080}:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            local:
+              properties:
+                bootstrap.servers: "broker:29092"
+              schema-registry:
+                url: "http://schema-registry:8081"
+              connect:
+                - name: connect
+                  url: "http://connect:8083"
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:28081/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   control-center:
-    image: confluentinc/cp-enterprise-control-center:7.6.2
+    image: confluentinc/cp-enterprise-control-center:7.6.12
     hostname: control-center
     container_name: control-center
+    profiles:
+      - control-center
     depends_on:
       broker:
         condition: service_healthy
@@ -130,7 +164,7 @@ services:
       ksqldb-server:
         condition: service_started
     ports:
-      - "9021:9021"
+      - "${CONTROL_CENTER_PORT:-9021}:9021"
     environment:
       CONTROL_CENTER_BOOTSTRAP_SERVERS: 'broker:29092'
       CONTROL_CENTER_CONNECT_CONNECT-DEFAULT_CLUSTER: 'connect:8083'
@@ -150,7 +184,7 @@ services:
       retries: 10
 
   ksqldb-server:
-    image: confluentinc/cp-ksqldb-server:7.6.2
+    image: confluentinc/cp-ksqldb-server:8.2.2
     hostname: ksqldb-server
     container_name: ksqldb-server
     depends_on:
@@ -159,7 +193,7 @@ services:
       connect:
         condition: service_healthy
     ports:
-      - "8088:8088"
+      - "${KSQLDB_PORT:-8088}:8088"
     restart: unless-stopped
     environment:
       KSQL_CONFIG_DIR: "/etc/ksql"
@@ -182,7 +216,7 @@ services:
       start_period: 30s
 
   ksqldb-cli:
-    image: confluentinc/cp-ksqldb-cli:7.6.2
+    image: confluentinc/cp-ksqldb-cli:7.6.12
     container_name: ksqldb-cli
     depends_on:
       broker:
@@ -196,7 +230,7 @@ services:
     restart: unless-stopped
 
   ksql-datagen:
-    image: confluentinc/ksqldb-examples:7.6.2
+    image: confluentinc/ksqldb-examples:7.6.12
     hostname: ksql-datagen
     container_name: ksql-datagen
     depends_on:
@@ -223,14 +257,14 @@ services:
     restart: unless-stopped
 
   rest-proxy:
-    image: confluentinc/cp-kafka-rest:7.6.2
+    image: confluentinc/cp-kafka-rest:8.2.2
     depends_on:
       broker:
         condition: service_healthy
       schema-registry:
         condition: service_healthy
     ports:
-      - 8082:8082
+      - "${REST_PROXY_PORT:-8082}:8082"
     hostname: rest-proxy
     container_name: rest-proxy
     environment:
