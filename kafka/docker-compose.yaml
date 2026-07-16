@@ -12,7 +12,6 @@
 # Port defaults are defined in .env — edit that file to remap any host port.
 # =============================================================================
 
-version: '3.9'
 services:
   broker:
     image: confluentinc/cp-server:8.2.2
@@ -20,7 +19,8 @@ services:
     container_name: broker
     ports:
       - "${BROKER_PORT:-9092}:9092"
-      - "${BROKER_JMX_PORT:-9101}:9101"
+      # JMX — unauthenticated by default; do NOT expose on untrusted networks
+      - "127.0.0.1:${BROKER_JMX_PORT:-9101}:9101"
     environment:
       # KRaft settings (ZooKeeper-free)
       KAFKA_NODE_ID: 1
@@ -48,6 +48,14 @@ services:
       CONFLUENT_METRICS_ENABLE: 'true'
       CONFLUENT_SUPPORT_CUSTOMER_ID: 'anonymous'
     restart: always
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "broker:9092"]
       interval: 10s
@@ -69,6 +77,14 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
     restart: always
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
       interval: 10s
@@ -88,7 +104,7 @@ services:
     ports:
       - "${CONNECT_PORT:-8083}:8083"
     volumes:
-      - ./jars:/etc/kafka-connect/jars/
+      - ./jars:/etc/kafka-connect/jars/:ro
     environment:
       CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
       CONNECT_REST_ADVERTISED_HOST_NAME: connect
@@ -110,6 +126,14 @@ services:
       CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components,/etc/kafka-connect/jars"
       CONNECT_LOG4J_LOGGERS: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8083/"]
       interval: 10s
@@ -141,6 +165,14 @@ services:
                 - name: connect
                   url: "http://connect:8083"
     restart: always
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:28081/health"]
       interval: 10s
@@ -177,8 +209,16 @@ services:
       CONFLUENT_METRICS_TOPIC_REPLICATION: 1
       PORT: 9021
     restart: always
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     healthcheck:
-      test: curl --fail http://localhost:9021 || exit 1
+      test: ["CMD", "curl", "--fail", "http://localhost:9021"]
       interval: 30s
       timeout: 30s
       retries: 10
@@ -195,6 +235,14 @@ services:
     ports:
       - "${KSQLDB_PORT:-8088}:8088"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 2g
     environment:
       KSQL_CONFIG_DIR: "/etc/ksql"
       KSQL_BOOTSTRAP_SERVERS: "broker:29092"
@@ -228,6 +276,14 @@ services:
     entrypoint: /bin/sh
     tty: true
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
   ksql-datagen:
     image: confluentinc/ksqldb-examples:7.6.12
@@ -255,6 +311,14 @@ services:
       STREAMS_SCHEMA_REGISTRY_HOST: schema-registry
       STREAMS_SCHEMA_REGISTRY_PORT: 8081
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   rest-proxy:
     image: confluentinc/cp-kafka-rest:8.2.2
@@ -273,6 +337,14 @@ services:
       KAFKA_REST_LISTENERS: "http://0.0.0.0:8082"
       KAFKA_REST_SCHEMA_REGISTRY_URL: 'http://schema-registry:8081'
     restart: always
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 512m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8082"]
       interval: 30s
