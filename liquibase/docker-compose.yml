@@ -1,0 +1,77 @@
+x-liquibase-base: &liquibase-base
+  build: .
+  volumes:
+    - ./changelogs:/liquibase/changelog
+  environment:
+    LIQUIBASE_COMMAND_URL: ${JDBC_URL}
+    LIQUIBASE_COMMAND_USERNAME: ${DB_USER}
+    LIQUIBASE_COMMAND_PASSWORD: ${DB_PASSWORD}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  # Reverse-engineer a live database into a YAML changelog.
+  # Output lands in changelogs/${OUTPUT_FILE:-changelog.yaml}.
+  liquibase-generate:
+    <<: *liquibase-base
+    environment:
+      LIQUIBASE_COMMAND_URL: ${JDBC_URL}
+      LIQUIBASE_COMMAND_USERNAME: ${DB_USER}
+      LIQUIBASE_COMMAND_PASSWORD: ${DB_PASSWORD}
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: /liquibase/changelog/${OUTPUT_FILE:-changelog.yaml}
+      # Postgres only — omit or leave blank for MySQL
+      LIQUIBASE_COMMAND_DEFAULT_SCHEMA_NAME: ${DB_SCHEMA:-public}
+    command: generate-changelog
+
+  # Apply all pending changesets in a changelog file to the target database.
+  # No changesets are re-applied if they already exist in DATABASECHANGELOG.
+  liquibase-update:
+    <<: *liquibase-base
+    environment:
+      LIQUIBASE_COMMAND_URL: ${JDBC_URL}
+      LIQUIBASE_COMMAND_USERNAME: ${DB_USER}
+      LIQUIBASE_COMMAND_PASSWORD: ${DB_PASSWORD}
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: /liquibase/changelog/${CHANGELOG_FILE:-changelog.yaml}
+      # Postgres only — omit or leave blank for MySQL
+      LIQUIBASE_COMMAND_DEFAULT_SCHEMA_NAME: ${DB_SCHEMA:-public}
+    command: update
+
+  # Compute the checksum of a specific changeset without executing any SQL.
+  # Useful for verifying a changeset has not been altered since it was first applied.
+  # CHANGESET_ID format: filepath::id::author  e.g. changelog.yaml::1234567890-1::liquibase
+  liquibase-checksum:
+    <<: *liquibase-base
+    environment:
+      LIQUIBASE_COMMAND_URL: ${JDBC_URL}
+      LIQUIBASE_COMMAND_USERNAME: ${DB_USER}
+      LIQUIBASE_COMMAND_PASSWORD: ${DB_PASSWORD}
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: /liquibase/changelog/${CHANGELOG_FILE:-changelog.yaml}
+      LIQUIBASE_COMMAND_CHANGESET_IDENTIFIER: ${CHANGESET_ID}
+    command: calculate-checksum
+
+# ─── .env template ────────────────────────────────────────────────────────────
+#
+# Copy the block below to a .env file and fill in your values.
+#
+# Common (all services):
+#   JDBC_URL=jdbc:postgresql://host.docker.internal:5432/mydb
+#   JDBC_URL=jdbc:mysql://host.docker.internal:3306/mydb
+#   DB_USER=myuser
+#   DB_PASSWORD=mypassword
+#
+# generate-changelog only:
+#   DB_SCHEMA=public          # postgres only
+#   OUTPUT_FILE=changelog.yaml
+#
+# update / checksum:
+#   CHANGELOG_FILE=changelog.yaml
+#   DB_SCHEMA=public          # postgres + update only
+#
+# checksum only:
+#   CHANGESET_ID=changelog.yaml::1234567890-1::liquibase
+#
+# ─── Commands ─────────────────────────────────────────────────────────────────
+#
+#   docker compose run --rm liquibase-generate
+#   docker compose run --rm liquibase-update
+#   docker compose run --rm liquibase-checksum

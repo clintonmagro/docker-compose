@@ -1,0 +1,229 @@
+version: '3'
+
+vars:
+  IMAGE_NAME: liquibase-reverse
+
+tasks:
+  default:
+    desc: List available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the Liquibase Docker image (includes MySQL + PostgreSQL drivers)
+    cmds:
+      - docker build -t {{.IMAGE_NAME}} .
+
+  generate:
+    desc: |
+      Reverse-engineer an existing database into a Liquibase YAML changelog.
+
+      Required:  DB_USER, DB_PASSWORD, DB_NAME
+      Optional:  DB_TYPE (postgres|mysql), DB_HOST, DB_PORT, DB_SCHEMA, OUTPUT_FILE
+
+      Examples:
+        task generate DB_USER=admin DB_PASSWORD=secret DB_NAME=mydb
+        task generate DB_TYPE=mysql DB_HOST=10.0.0.5 DB_USER=root DB_PASSWORD=secret DB_NAME=mydb
+        task generate DB_TYPE=postgres DB_HOST=host.docker.internal DB_PORT=5433 DB_USER=app DB_PASSWORD=pass DB_NAME=prod DB_SCHEMA=app_schema
+    vars:
+      DB_TYPE: '{{.DB_TYPE | default "postgres"}}'
+      DB_HOST: '{{.DB_HOST | default "localhost"}}'
+      DB_SCHEMA: '{{.DB_SCHEMA | default "public"}}'
+      OUTPUT_FILE: '{{.OUTPUT_FILE | default "changelog.yaml"}}'
+    cmds:
+      - |
+        missing=""
+        [ -z "{{.DB_USER}}" ]     && missing="${missing}  DB_USER      database username\n"
+        [ -z "{{.DB_PASSWORD}}" ] && missing="${missing}  DB_PASSWORD  database password\n"
+        [ -z "{{.DB_NAME}}" ]     && missing="${missing}  DB_NAME      database / catalog name\n"
+
+        if [ -n "$missing" ]; then
+          printf "\nError: missing required variable(s):\n\n%b\n" "$missing"
+          printf "Usage:\n"
+          printf "  task generate DB_TYPE=postgres DB_HOST=localhost DB_PORT=5432 DB_USER=myuser DB_PASSWORD=mypass DB_NAME=mydb DB_SCHEMA=public\n"
+          printf "  task generate DB_TYPE=mysql    DB_HOST=localhost DB_PORT=3306 DB_USER=myuser DB_PASSWORD=mypass DB_NAME=mydb\n\n"
+          printf "All variables:\n"
+          printf "  DB_USER      (required)  database username\n"
+          printf "  DB_PASSWORD  (required)  database password\n"
+          printf "  DB_NAME      (required)  database / catalog name\n"
+          printf "  DB_TYPE                  postgres (default) | mysql\n"
+          printf "  DB_HOST                  localhost (default)\n"
+          printf "  DB_PORT                  5432 for postgres, 3306 for mysql\n"
+          printf "  DB_SCHEMA                public (default, postgres only)\n"
+          printf "  OUTPUT_FILE              changelog.yaml (default)\n\n"
+          exit 1
+        fi
+      - mkdir -p changelogs
+      - |
+        DB_TYPE="{{.DB_TYPE}}"
+        DB_HOST="{{.DB_HOST}}"
+        DB_PORT="{{.DB_PORT}}"
+        DB_NAME="{{.DB_NAME}}"
+        DB_SCHEMA="{{.DB_SCHEMA}}"
+
+        if [ "$DB_TYPE" = "mysql" ]; then
+          DB_PORT="${DB_PORT:-3306}"
+          JDBC_URL="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+          SCHEMA_ARG=""
+        else
+          DB_PORT="${DB_PORT:-5432}"
+          JDBC_URL="jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+          SCHEMA_ARG="--default-schema-name=${DB_SCHEMA}"
+        fi
+
+        echo "Connecting to: $JDBC_URL"
+        echo "Output: changelogs/{{.OUTPUT_FILE}}"
+
+        docker run --rm \
+          --add-host=host.docker.internal:host-gateway \
+          -v "$(pwd)/changelogs:/liquibase/changelog" \
+          -e LIQUIBASE_COMMAND_PASSWORD="{{.DB_PASSWORD}}" \
+          {{.IMAGE_NAME}} \
+          generate-changelog \
+          --url="$JDBC_URL" \
+          --username="{{.DB_USER}}" \
+          --changelog-file="/liquibase/changelog/{{.OUTPUT_FILE}}" \
+          $SCHEMA_ARG
+
+  update:
+    desc: |
+      Apply a changelog file to a database (liquibase update).
+      Executes all changesets in the file that have not yet been applied.
+
+      Required:  DB_USER, DB_PASSWORD, DB_NAME
+      Optional:  CHANGELOG_FILE (changelog.yaml), DB_TYPE, DB_HOST, DB_PORT, DB_SCHEMA
+
+      Examples:
+        task update DB_USER=admin DB_PASSWORD=secret DB_NAME=mydb
+        task update CHANGELOG_FILE=baseline.yaml DB_TYPE=mysql DB_HOST=10.0.0.5 DB_USER=root DB_PASSWORD=secret DB_NAME=mydb
+    vars:
+      DB_TYPE: '{{.DB_TYPE | default "postgres"}}'
+      DB_HOST: '{{.DB_HOST | default "localhost"}}'
+      DB_SCHEMA: '{{.DB_SCHEMA | default "public"}}'
+      CHANGELOG_FILE: '{{.CHANGELOG_FILE | default "changelog.yaml"}}'
+    cmds:
+      - |
+        missing=""
+        [ -z "{{.DB_USER}}" ]     && missing="${missing}  DB_USER      database username\n"
+        [ -z "{{.DB_PASSWORD}}" ] && missing="${missing}  DB_PASSWORD  database password\n"
+        [ -z "{{.DB_NAME}}" ]     && missing="${missing}  DB_NAME      database / catalog name\n"
+
+        if [ -n "$missing" ]; then
+          printf "\nError: missing required variable(s):\n\n%b\n" "$missing"
+          printf "Usage:\n"
+          printf "  task update CHANGELOG_FILE=changelog.yaml DB_TYPE=postgres DB_HOST=localhost DB_USER=myuser DB_PASSWORD=mypass DB_NAME=mydb\n"
+          printf "  task update CHANGELOG_FILE=changelog.yaml DB_TYPE=mysql    DB_HOST=localhost DB_USER=myuser DB_PASSWORD=mypass DB_NAME=mydb\n\n"
+          printf "All variables:\n"
+          printf "  DB_USER        (required)  database username\n"
+          printf "  DB_PASSWORD    (required)  database password\n"
+          printf "  DB_NAME        (required)  database / catalog name\n"
+          printf "  CHANGELOG_FILE             changelog.yaml (default) — filename inside changelogs/\n"
+          printf "  DB_TYPE                    postgres (default) | mysql\n"
+          printf "  DB_HOST                    localhost (default)\n"
+          printf "  DB_PORT                    5432 for postgres, 3306 for mysql\n"
+          printf "  DB_SCHEMA                  public (default, postgres only)\n\n"
+          exit 1
+        fi
+      - |
+        DB_TYPE="{{.DB_TYPE}}"
+        DB_HOST="{{.DB_HOST}}"
+        DB_PORT="{{.DB_PORT}}"
+        DB_NAME="{{.DB_NAME}}"
+        DB_SCHEMA="{{.DB_SCHEMA}}"
+
+        if [ "$DB_TYPE" = "mysql" ]; then
+          DB_PORT="${DB_PORT:-3306}"
+          JDBC_URL="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+          SCHEMA_ARG=""
+        else
+          DB_PORT="${DB_PORT:-5432}"
+          JDBC_URL="jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+          SCHEMA_ARG="--default-schema-name=${DB_SCHEMA}"
+        fi
+
+        echo "Applying changelogs/{{.CHANGELOG_FILE}} → $JDBC_URL"
+
+        docker run --rm \
+          --add-host=host.docker.internal:host-gateway \
+          -v "$(pwd)/changelogs:/liquibase/changelog" \
+          -e LIQUIBASE_COMMAND_PASSWORD="{{.DB_PASSWORD}}" \
+          {{.IMAGE_NAME}} \
+          update \
+          --url="$JDBC_URL" \
+          --username="{{.DB_USER}}" \
+          --changelog-file="/liquibase/changelog/{{.CHANGELOG_FILE}}" \
+          $SCHEMA_ARG
+
+  checksum:
+    desc: |
+      Calculate the checksum of a specific changeset — no SQL is executed.
+      Useful for verifying a changeset has not been altered since it was first applied.
+
+      Required:  DB_USER, DB_PASSWORD, DB_NAME, CHANGESET_ID
+      Optional:  CHANGELOG_FILE (changelog.yaml), DB_TYPE, DB_HOST, DB_PORT
+
+      CHANGESET_ID format:  <filepath>::<id>::<author>
+        filepath is the path as it appears inside the changelog, not the host path.
+        Example: changelog.yaml::1234567890-1::liquibase
+
+      Examples:
+        task checksum CHANGESET_ID="changelog.yaml::1234567890-1::liquibase" DB_USER=admin DB_PASSWORD=secret DB_NAME=mydb
+        task checksum CHANGELOG_FILE=baseline.yaml CHANGESET_ID="baseline.yaml::create-users::dev" DB_USER=admin DB_PASSWORD=secret DB_NAME=mydb
+    vars:
+      DB_TYPE: '{{.DB_TYPE | default "postgres"}}'
+      DB_HOST: '{{.DB_HOST | default "localhost"}}'
+      CHANGELOG_FILE: '{{.CHANGELOG_FILE | default "changelog.yaml"}}'
+    cmds:
+      - |
+        missing=""
+        [ -z "{{.DB_USER}}" ]      && missing="${missing}  DB_USER        database username\n"
+        [ -z "{{.DB_PASSWORD}}" ]  && missing="${missing}  DB_PASSWORD    database password\n"
+        [ -z "{{.DB_NAME}}" ]      && missing="${missing}  DB_NAME        database / catalog name\n"
+        [ -z "{{.CHANGESET_ID}}" ] && missing="${missing}  CHANGESET_ID   changeset identifier — filepath::id::author\n"
+
+        if [ -n "$missing" ]; then
+          printf "\nError: missing required variable(s):\n\n%b\n" "$missing"
+          printf "Usage:\n"
+          printf "  task checksum CHANGESET_ID=\"changelog.yaml::1234567890-1::liquibase\" DB_USER=myuser DB_PASSWORD=mypass DB_NAME=mydb\n\n"
+          printf "CHANGESET_ID format:  filepath::id::author\n"
+          printf "  The filepath is the value as it appears inside the changelog file.\n"
+          printf "  Open your changelog and copy the path from the changeSet block.\n\n"
+          printf "All variables:\n"
+          printf "  CHANGESET_ID   (required)  changeset identifier — filepath::id::author\n"
+          printf "  DB_USER        (required)  database username\n"
+          printf "  DB_PASSWORD    (required)  database password\n"
+          printf "  DB_NAME        (required)  database / catalog name\n"
+          printf "  CHANGELOG_FILE             changelog.yaml (default) — filename inside changelogs/\n"
+          printf "  DB_TYPE                    postgres (default) | mysql\n"
+          printf "  DB_HOST                    localhost (default)\n"
+          printf "  DB_PORT                    5432 for postgres, 3306 for mysql\n\n"
+          exit 1
+        fi
+      - |
+        DB_TYPE="{{.DB_TYPE}}"
+        DB_HOST="{{.DB_HOST}}"
+        DB_PORT="{{.DB_PORT}}"
+        DB_NAME="{{.DB_NAME}}"
+
+        if [ "$DB_TYPE" = "mysql" ]; then
+          DB_PORT="${DB_PORT:-3306}"
+          JDBC_URL="jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+        else
+          DB_PORT="${DB_PORT:-5432}"
+          JDBC_URL="jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}"
+        fi
+
+        echo "Calculating checksum for: {{.CHANGESET_ID}}"
+        echo "Changelog: changelogs/{{.CHANGELOG_FILE}}"
+
+        docker run --rm \
+          --add-host=host.docker.internal:host-gateway \
+          -v "$(pwd)/changelogs:/liquibase/changelog" \
+          -e LIQUIBASE_COMMAND_PASSWORD="{{.DB_PASSWORD}}" \
+          {{.IMAGE_NAME}} \
+          calculate-checksum \
+          --url="$JDBC_URL" \
+          --username="{{.DB_USER}}" \
+          --changelog-file="/liquibase/changelog/{{.CHANGELOG_FILE}}" \
+          --changeset-identifier="{{.CHANGESET_ID}}"
